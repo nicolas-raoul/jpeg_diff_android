@@ -1,6 +1,6 @@
 # JPEG Diff Android App
 
-A premium, modern Android application built with Jetpack Compose to compare two JPEG images pixel-by-pixel with zero tolerance.
+An Android application built with Jetpack Compose to compare two JPEG images pixel-by-pixel with zero tolerance.
 
 ## Features
 
@@ -13,6 +13,10 @@ A premium, modern Android application built with Jetpack Compose to compare two 
   - Sleek dark-mode theme utilizing Material 3 design guidelines.
   - Interactive output viewer supporting pinch-to-zoom and drag-to-pan gestures.
   - Detailed statistics panel showing total pixels, mismatch count, and exact match rate percentage.
+
+## Use cases
+
+Useful to test lossless or semi-lossless JPEG operations such as rotating/cropping/blurring. See https://github.com/lossless-jpg/data for context.
 
 ## License
 
