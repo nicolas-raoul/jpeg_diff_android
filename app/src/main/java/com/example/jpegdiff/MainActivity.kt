@@ -44,6 +44,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.InputStream
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.compose.runtime.rememberCoroutineScope
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -225,10 +234,51 @@ fun CompareApp() {
                     // Statistics Card
                     StatsCard(result = result)
 
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Download Button
+                    var isSaving by remember { mutableStateOf(false) }
+                    val scope = rememberCoroutineScope()
+
+                    Button(
+                        onClick = {
+                            result.resultBitmap?.let { bitmap ->
+                                isSaving = true
+                                scope.launch {
+                                    val savedUri = saveBitmapToDownloads(context, bitmap)
+                                    isSaving = false
+                                    if (savedUri != null) {
+                                        Toast.makeText(context, "Saved difference to Downloads", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "Failed to save image", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !isSaving && result.resultBitmap != null,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.onSecondary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        } else {
+                            Text(
+                                text = "DOWNLOAD DIFFERENCE (100% Quality)",
+                                color = MaterialTheme.colorScheme.onSecondary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(24.dp))
 
                     Text(
-                        text = "COMPARISON OUTPUT (Pinch to Zoom, Drag to Pan)",
+                        text = "DIFFERENCE (Pinch to Zoom, Drag to Pan)",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.Gray,
@@ -422,7 +472,7 @@ fun ZoomableImage(bitmap: Bitmap) {
     ) {
         Image(
             bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Comparison Result Output",
+            contentDescription = "Difference Output",
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer(
@@ -546,7 +596,7 @@ private suspend fun performComparison(
                         mismatched++
                         outPixels[idx] = android.graphics.Color.RED
                     } else {
-                        outPixels[idx] = c1
+                        outPixels[idx] = whitenColor(c1)
                     }
                 } else {
                     mismatched++
@@ -572,4 +622,67 @@ private suspend fun performComparison(
     } catch (e: Exception) {
         return@withContext CompareResult(false, "Comparison execution failed: ${e.localizedMessage}")
     }
+}
+
+private fun whitenColor(color: Int): Int {
+    val r = (color shr 16) and 0xFF
+    val g = (color shr 8) and 0xFF
+    val b = color and 0xFF
+    val rW = (r * 0.2f + 255 * 0.8f).toInt().coerceIn(0, 255)
+    val gW = (g * 0.2f + 255 * 0.8f).toInt().coerceIn(0, 255)
+    val bW = (b * 0.2f + 255 * 0.8f).toInt().coerceIn(0, 255)
+    return (color and 0xFF000000.toInt()) or (rW shl 16) or (gW shl 8) or bW
+}
+
+private fun saveBitmapToDownloads(context: Context, bitmap: Bitmap): Uri? {
+    val filename = "jpegdiff_difference_${System.currentTimeMillis()}.jpg"
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+
+        if (uri != null) {
+            try {
+                resolver.openOutputStream(uri)?.use { stream ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
+                        throw IOException("Failed to compress bitmap")
+                    }
+                }
+                contentValues.clear()
+                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(uri, contentValues, null, null)
+                return uri
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                e.printStackTrace()
+            }
+        }
+    } else {
+        // Fallback for API < 29
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val file = File(downloadsDir, filename)
+        try {
+            FileOutputStream(file).use { stream ->
+                if (bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)) {
+                    // Let the media scanner know about the file
+                    val mediaValues = ContentValues().apply {
+                        put(MediaStore.Images.Media.DATA, file.absolutePath)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    }
+                    context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, mediaValues)
+                    return Uri.fromFile(file)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+    return null
 }
